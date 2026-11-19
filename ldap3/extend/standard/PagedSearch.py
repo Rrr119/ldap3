@@ -28,6 +28,8 @@ from ...utils.dn import safe_dn
 from ...core.results import DO_NOT_RAISE_EXCEPTIONS, RESULT_SIZE_LIMIT_EXCEEDED
 from ...core.exceptions import LDAPOperationResult
 from ...utils.log import log, log_enabled, ERROR, BASIC, PROTOCOL, NETWORK, EXTENDED
+from .ResumablePagedSearch import PagedSearchCursor, PagedSearchCursorIterator, \
+    resumable_paged_search, paged_search_resumable
 
 
 def paged_search_generator(connection,

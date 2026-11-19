@@ -145,9 +145,12 @@ from .version import __author__, __version__, __email__, __description__, __stat
 from .utils.config import get_config_parameter, set_config_parameter
 from .core.server import Server
 from .core.connection import Connection
+from .core.connection_pool import ConnectionPool, LDAPConnectionPool
 from .core.tls import Tls
 from .core.pooling import ServerPool
 from .core.rdns import ReverseDnsSetting
+from .extend.standard.ResumablePagedSearch import PagedSearchCursor, PagedSearchCursorIterator, \
+    resumable_paged_search, paged_search_resumable
 from .abstract.objectDef import ObjectDef
 from .abstract.attrDef import AttrDef
 from .abstract.attribute import Attribute, WritableAttribute, OperationalAttribute

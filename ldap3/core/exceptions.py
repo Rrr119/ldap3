@@ -564,6 +564,30 @@ class LDAPConnectionPoolNotStartedError(LDAPExceptionError):
     pass
 
 
+class LDAPConnectionPoolError(LDAPExceptionError):
+    pass
+
+
+class LDAPConnectionPoolClosedError(LDAPConnectionPoolError):
+    pass
+
+
+class LDAPConnectionPoolExhaustedError(LDAPConnectionPoolError):
+    pass
+
+
+class LDAPPagedSearchCursorError(LDAPExceptionError):
+    pass
+
+
+class LDAPPagedSearchCursorMismatchError(LDAPPagedSearchCursorError):
+    pass
+
+
+class LDAPPagedSearchResumeError(LDAPPagedSearchCursorError):
+    pass
+
+
 # restartable strategy
 class LDAPMaximumRetriesError(LDAPExceptionError):
     def __str__(self):

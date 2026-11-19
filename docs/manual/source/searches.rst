@@ -378,6 +378,52 @@ Working with a list keeps all the found entries in a list and you can elaborate 
 
 If the paged search operation returns an error, the paged_search() method raises an Exception of class LDAPOperationResult, subclassed to the actual error returned by the server.
 
+Resumable paged searches
+------------------------
+
+For very large directories use a cookie cursor instead of a page number. The cursor stores the opaque RFC 2696 cookie and is advanced only after a
+complete page has been received. A connection pool keeps one connection leased for the whole cursor and replaces a broken connection before the
+current page is retried with the same cookie::
+
+    from ldap3 import ConnectionPool, PagedSearchCursor, resumable_paged_search
+
+    pool = ConnectionPool.from_connection(connection, size=4)
+    cursor = PagedSearchCursor(search_base='o=test',
+                               search_filter='(objectClass=inetOrgPerson)',
+                               attributes=['cn', 'givenName'],
+                               paged_size=1000)
+
+    result = resumable_paged_search(connection,
+                                    cursor.search_base,
+                                    cursor.search_filter,
+                                    attributes=cursor.attributes,
+                                    paged_size=cursor.paged_size,
+                                    cursor=cursor,
+                                    connection_pool=pool,
+                                    max_retries=8,
+                                    on_cursor=lambda current: current.save('/tmp/ldap.cursor'))
+
+    for entry in result:
+        process(entry)
+
+The cursor is persisted as JSON and includes a fingerprint of the search definition. Loading it with ``PagedSearchCursor.load()`` and passing it
+back to ``resumable_paged_search()`` continues at the next unconfirmed page. Using a cursor with a different base, filter, scope or attribute set
+raises ``LDAPPagedSearchCursorMismatchError``::
+
+    cursor = PagedSearchCursor.load('/tmp/ldap.cursor')
+    for entry in resumable_paged_search(connection,
+                                        cursor.search_base,
+                                        cursor.search_filter,
+                                        attributes=cursor.attributes,
+                                        paged_size=cursor.paged_size,
+                                        cursor=cursor,
+                                        connection_pool=pool):
+        process(entry)
+
+The exactly-once boundary is a complete page. If the consumer itself crashes after reading only part of a page, persist page entries and their
+acknowledgements separately. Some directory vendors bind a paging cookie to one LDAP session; in that case use sticky routing to the same backend or
+the vendor's stable paging extension.
+
 Response
 --------
 

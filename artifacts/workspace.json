@@ -1,0 +1,17 @@
+{
+  "root": "/home/dev/feedback/uid26906",
+  "B": "/home/dev/feedback/uid26906",
+  "sha": "1629b94ae67543a6f4ff4554b8f7109093ca0f65",
+  "wslDistro": "Ubuntu-26.04",
+  "source": {
+    "owner": "cannatag",
+    "repo": "ldap3",
+    "sha": "1629b94ae67543a6f4ff4554b8f7109093ca0f65"
+  },
+  "fork": {
+    "owner": "Rrr119",
+    "repo": "ldap3",
+    "cloneUrl": "https://github.com/Rrr119/ldap3.git"
+  },
+  "at": "2026-11-19T05:15:32.646Z"
+}

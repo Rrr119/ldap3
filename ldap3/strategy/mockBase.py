@@ -25,6 +25,7 @@
 
 import json
 import re
+from threading import RLock
 
 from random import SystemRandom
 
@@ -42,7 +43,8 @@ from ..operation.search import search_request_to_dict, parse_filter, ROOT, AND, 
     MATCH_GREATER_OR_EQUAL, MATCH_LESS_OR_EQUAL, MATCH_EXTENSIBLE, MATCH_PRESENT,\
     MATCH_SUBSTRING, MATCH_EQUAL
 from ..utils.conv import json_hook, to_unicode, to_raw
-from ..core.exceptions import LDAPDefinitionError, LDAPPasswordIsMandatoryError, LDAPInvalidValueError, LDAPSocketOpenError
+from ..core.exceptions import LDAPDefinitionError, LDAPPasswordIsMandatoryError, LDAPInvalidValueError, \
+    LDAPSocketOpenError, LDAPSocketReceiveError
 from ..core.results import RESULT_SUCCESS, RESULT_OPERATIONS_ERROR, RESULT_UNAVAILABLE_CRITICAL_EXTENSION, \
     RESULT_INVALID_CREDENTIALS, RESULT_NO_SUCH_OBJECT, RESULT_ENTRY_ALREADY_EXISTS, RESULT_COMPARE_TRUE, \
     RESULT_COMPARE_FALSE, RESULT_NO_SUCH_ATTRIBUTE, RESULT_UNWILLING_TO_PERFORM, RESULT_PROTOCOL_ERROR, RESULT_CONSTRAINT_VIOLATION, RESULT_NOT_ALLOWED_ON_RDN
@@ -130,21 +132,28 @@ class PagedSearchSet(object):
         self.cookie = None
         self.sent = 0
         self.done = False
+        self.offsets = {}
 
-    def next(self, size=None):
+    def next(self, size=None, cookie=None):
         if size:
             self.size=size
 
-        message = ''
-        response = self.response[self.sent: self.sent + self.size]
-        self.sent += self.size
-        if self.sent > len(self.response):
-            self.done = True
-            self.cookie = ''
+        cookie = cookie or b''
+        if cookie not in self.offsets:
+            start = self.sent
+            end = start + self.size
+            next_cookie = random_cookie() if end < len(self.response) else b''
+            self.sent = end
+            self.offsets[cookie] = (start, next_cookie)
         else:
-            self.cookie = random_cookie()
+            start, next_cookie = self.offsets[cookie]
 
-        response_control = paged_search_control(False, len(self.response), self.cookie)
+        response = self.response[start: start + self.size]
+        self.cookie = next_cookie
+        self.done = not next_cookie
+
+        message = ''
+        response_control = paged_search_control(False, len(self.response), next_cookie)
         result = {'resultCode': RESULT_SUCCESS,
                   'matchedDN': '',
                   'diagnosticMessage': to_unicode(message, SERVER_ENCODING),
@@ -168,7 +177,16 @@ class MockBaseStrategy(object):
         self.custom_validators = None
         self.operational_attributes = ['entryDN']
         self.add_entry('cn=schema', [], validate=False)  # add default entry for schema
-        self._paged_sets = []  # list of paged search in progress
+        server = self.connection.server
+        if not hasattr(server, '_paged_sets'):
+            server._paged_sets = []  # paged searches live on the server, not on a TCP connection
+        if not hasattr(server, '_paged_search_cookies'):
+            server._paged_search_cookies = {}
+        if not hasattr(server, '_paged_search_lock'):
+            server._paged_search_lock = RLock()
+        self._paged_sets = server._paged_sets
+        self._paged_search_cookies = server._paged_search_cookies
+        self._paged_search_lock = server._paged_search_lock
         if log_enabled(BASIC):
             log(BASIC, 'instantiated <%s>: <%s>', self.__class__.__name__, self)
 
@@ -183,6 +201,14 @@ class MockBaseStrategy(object):
         self.connection.closed = True
         if self.connection.usage:
             self.connection._usage.closed_sockets += 1
+
+    def _simulate_disconnect(self, request, controls, hook_name):
+        disconnect = getattr(self.connection.server, hook_name, None)
+        if disconnect is not None and disconnect(request, controls):
+            self.connection.closed = True
+            self.connection.bound = False
+            self.connection.listening = False
+            raise LDAPSocketReceiveError('simulated connection reset by peer')
 
     def _prepare_value(self, attribute_type, value, validate=True):
         """
@@ -619,6 +645,7 @@ class MockBaseStrategy(object):
         # response_entry: object, attributes
         # response_done: LDAPResult
         request = search_request_to_dict(request_message)
+        self._simulate_disconnect(request, controls, 'mock_disconnect')
         if controls:
             decoded_controls = [self.decode_control(control) for control in controls if control]
             for decoded_control in decoded_controls:
@@ -635,21 +662,34 @@ class MockBaseStrategy(object):
                         response, result =  self._execute_search(request)
                         if result['resultCode'] == RESULT_SUCCESS:  # success
                             paged_set = PagedSearchSet(response, int(decoded_control[1]['value']['size']), decoded_control[1]['criticality'])
-                            response, result = paged_set.next()
-                            if paged_set.done:  # paged search already completed, no need to store the set
-                                del paged_set
-                            else:
-                                self._paged_sets.append(paged_set)
+                            response, result = paged_set.next(cookie=None)
+                            with self._paged_search_lock:
+                                if paged_set.cookie:
+                                    self._paged_search_cookies[paged_set.cookie] = paged_set
+                                if not paged_set.done:
+                                    self._paged_sets.append(paged_set)
+                            self._simulate_disconnect(request, controls, 'mock_disconnect_after')
                             return response, result
                         else:
                             return [], result
                     else:
-                        for paged_set in self._paged_sets:
-                            if paged_set.cookie == decoded_control[1]['value']['cookie']: # existing paged set
-                                response, result = paged_set.next()  # returns next bunch of entries as per paged set specifications
-                                if paged_set.done:
+                        request_cookie = decoded_control[1]['value']['cookie']
+                        with self._paged_search_lock:
+                            paged_set = self._paged_search_cookies.get(request_cookie)
+                            if paged_set is None:  # compatibility with paged sets created before this cookie registry
+                                for candidate in self._paged_sets:
+                                    if candidate.cookie == request_cookie:
+                                        paged_set = candidate
+                                        break
+                            if paged_set is not None:  # existing paged set
+                                response, result = paged_set.next(cookie=request_cookie)
+                                if paged_set.cookie:
+                                    self._paged_search_cookies[paged_set.cookie] = paged_set
+                                if paged_set.done and paged_set in self._paged_sets:
                                     self._paged_sets.remove(paged_set)
-                                return response, result
+                        if paged_set is not None:
+                            self._simulate_disconnect(request, controls, 'mock_disconnect_after')
+                            return response, result
                         # paged set not found
                         message = 'Invalid cookie in simple paged search'
                         result = {'resultCode': RESULT_OPERATIONS_ERROR,

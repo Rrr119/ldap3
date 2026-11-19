@@ -47,6 +47,7 @@ from .novell.checkGroupsMemberships import edir_check_groups_memberships
 from .standard.whoAmI import WhoAmI
 from .standard.modifyPassword import ModifyPassword
 from .standard.PagedSearch import paged_search_generator, paged_search_accumulator
+from .standard.ResumablePagedSearch import resumable_paged_search
 from .standard.PersistentSearch import PersistentSearch
 
 
@@ -95,7 +96,38 @@ class StandardExtendedOperations(ExtendedOperationContainer):
                      controls=None,
                      paged_size=100,
                      paged_criticality=False,
-                     generator=True):
+                     generator=True,
+                     cursor=None,
+                     connection_pool=None,
+                     max_retries=None,
+                     retry_delay=0.1,
+                     max_retry_delay=5,
+                     on_cursor=None):
+
+        if cursor is not None or connection_pool is not None or max_retries:
+            retries = 3 if max_retries is None else max_retries
+            result = resumable_paged_search(self._connection,
+                                            search_base,
+                                            search_filter,
+                                            search_scope,
+                                            dereference_aliases,
+                                            attributes,
+                                            size_limit,
+                                            time_limit,
+                                            types_only,
+                                            get_operational_attributes,
+                                            controls,
+                                            paged_size,
+                                            paged_criticality,
+                                            cursor=cursor,
+                                            connection_pool=connection_pool,
+                                            max_retries=retries,
+                                            retry_delay=retry_delay,
+                                            max_retry_delay=max_retry_delay,
+                                            on_cursor=on_cursor)
+            if generator:
+                return result
+            return list(result)
 
         if generator:
             return paged_search_generator(self._connection,
@@ -125,6 +157,47 @@ class StandardExtendedOperations(ExtendedOperationContainer):
                                             controls,
                                             paged_size,
                                             paged_criticality)
+
+    def paged_search_resumable(self,
+                               search_base,
+                               search_filter,
+                               search_scope=SUBTREE,
+                               dereference_aliases=DEREF_ALWAYS,
+                               attributes=None,
+                               size_limit=0,
+                               time_limit=0,
+                               types_only=False,
+                               get_operational_attributes=False,
+                               controls=None,
+                               paged_size=100,
+                               paged_criticality=False,
+                               cursor=None,
+                               connection_pool=None,
+                               max_retries=3,
+                               retry_delay=0.1,
+                               max_retry_delay=5,
+                               on_cursor=None):
+        return resumable_paged_search(self._connection,
+                                      search_base,
+                                      search_filter,
+                                      search_scope,
+                                      dereference_aliases,
+                                      attributes,
+                                      size_limit,
+                                      time_limit,
+                                      types_only,
+                                      get_operational_attributes,
+                                      controls,
+                                      paged_size,
+                                      paged_criticality,
+                                      cursor=cursor,
+                                      connection_pool=connection_pool,
+                                      max_retries=max_retries,
+                                      retry_delay=retry_delay,
+                                      max_retry_delay=max_retry_delay,
+                                      on_cursor=on_cursor)
+
+    resumable_paged_search = paged_search_resumable
 
     def persistent_search(self,
                           search_base='',
